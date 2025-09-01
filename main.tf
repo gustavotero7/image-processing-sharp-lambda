@@ -40,21 +40,21 @@ locals {
       ephemeral_storage    = 512
       timeout              = 60
       max_file_size        = 5242880  # 5MB in bytes
-      reserved_concurrent  = 10
+      reserved_concurrent  = -1  # No reserved concurrency (use account pool)
     }
     tier2 = {
       memory_size          = 2048
       ephemeral_storage    = 1024
       timeout              = 120
       max_file_size        = 15728640 # 15MB in bytes
-      reserved_concurrent  = 5
+      reserved_concurrent  = -1  # No reserved concurrency (use account pool)
     }
     tier3 = {
       memory_size          = 3008
       ephemeral_storage    = 2048
       timeout              = 180
       max_file_size        = 26214400 # 25MB in bytes
-      reserved_concurrent  = 3
+      reserved_concurrent  = -1  # No reserved concurrency (use account pool)
     }
   }
 }
@@ -179,16 +179,14 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_role.name
 }
 
-# Lambda Layer for Sharp (optional - for better cold start performance)
-resource "aws_lambda_layer_version" "sharp_layer" {
-  filename            = "sharp-layer.zip"
-  layer_name          = "${var.project_name}-sharp-layer"
-  compatible_runtimes = ["nodejs18.x"]
-  description         = "Sharp library for image processing"
+# Sharp Layer - External pre-built layer
+# Layer must be deployed separately using ./deploy-sharp-layer.sh
+data "local_file" "layer_info" {
+  filename = "${path.module}/layer-info.json"
+}
 
-  lifecycle {
-    ignore_changes = [filename]
-  }
+locals {
+  layer_info = jsondecode(data.local_file.layer_info.content)
 }
 
 # Lambda Functions (3 tiers)
@@ -196,6 +194,7 @@ resource "aws_lambda_function" "image_processor" {
   for_each = local.lambda_tiers
 
   filename         = "function.zip"
+  source_code_hash = filebase64sha256("function.zip")
   function_name    = "${var.project_name}-${var.environment}-${each.key}"
   role            = aws_iam_role.lambda_role.arn
   handler         = "index.handler"
@@ -209,6 +208,9 @@ resource "aws_lambda_function" "image_processor" {
 
   reserved_concurrent_executions = each.value.reserved_concurrent
 
+  # Use pre-built Sharp layer
+  layers = [local.layer_info.layer_arn]
+
   environment {
     variables = {
       WEBP_QUALITY  = var.webp_quality
@@ -218,17 +220,11 @@ resource "aws_lambda_function" "image_processor" {
     }
   }
 
-  layers = [aws_lambda_layer_version.sharp_layer.arn]
-
   tags = {
     Name        = "${var.project_name}-${each.key}"
     Environment = var.environment
     Project     = var.project_name
     Tier        = each.key
-  }
-
-  lifecycle {
-    ignore_changes = [filename]
   }
 }
 

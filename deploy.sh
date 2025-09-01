@@ -16,14 +16,24 @@ NC='\033[0m' # No Color
 check_prerequisites() {
     echo "📋 Checking prerequisites..."
 
-    if ! command -v terraform &> /dev/null; then
-        echo -e "${RED}❌ Terraform is not installed${NC}"
+    if ! command -v tofu &> /dev/null; then
+        echo -e "${RED}❌ OpenTofu is not installed${NC}"
+        exit 1
+    fi
+
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}❌ Docker is not installed${NC}"
+        exit 1
+    fi
+
+    # Check if Docker is running
+    if ! docker info &> /dev/null; then
+        echo -e "${RED}❌ Docker is not running${NC}"
         exit 1
     fi
 
     if ! command -v npm &> /dev/null; then
-        echo -e "${RED}❌ npm is not installed${NC}"
-        exit 1
+        echo -e "${YELLOW}⚠️  npm not found - will use Docker-only build${NC}"
     fi
 
     if ! command -v zip &> /dev/null; then
@@ -36,68 +46,64 @@ check_prerequisites() {
 
 # Build Lambda function
 build_lambda() {
-    echo "📦 Building Lambda function..."
+    echo "📦 Building Lambda function with Docker..."
 
     # Clean previous builds
     rm -rf node_modules function.zip
 
-    # Install production dependencies
-    npm ci --production --platform=linux --arch=x64
+    # Build using Docker to ensure Linux compatibility
+    echo "🐳 Building Lambda package in Docker container..."
+    
+    # Build the container for x86_64 platform
+    docker build --platform linux/amd64 -t lambda-builder .
+    
+    # Create a temporary container and copy the zip file
+    CONTAINER_ID=$(docker create lambda-builder)
+    docker cp $CONTAINER_ID:/var/task/function.zip ./function.zip
+    docker rm $CONTAINER_ID
+    
+    # Clean up the Docker image
+    docker rmi lambda-builder
 
-    # Create deployment package
-    zip -r function.zip index.js node_modules
+    if [ ! -f function.zip ]; then
+        echo -e "${RED}❌ Failed to create function.zip${NC}"
+        exit 1
+    fi
 
-    echo -e "${GREEN}✅ Lambda function built successfully${NC}"
+    echo -e "${GREEN}✅ Lambda function built successfully with Docker${NC}"
 }
 
-# Build Sharp layer (optional, for better cold starts)
-build_sharp_layer() {
-    echo "📦 Building Sharp layer..."
-
-    mkdir -p sharp-layer/nodejs
-    cd sharp-layer/nodejs
-
-    # Create package.json for layer
-    cat > package.json <<EOF
-{
-  "name": "sharp-layer",
-  "version": "1.0.0",
-  "dependencies": {
-    "sharp": "^0.33.0"
-  }
-}
-EOF
-
-    # Install Sharp for Linux
-    npm install --platform=linux --arch=x64
-
-    cd ..
-    zip -r ../sharp-layer.zip nodejs
-    cd ..
-    rm -rf sharp-layer
-
-    echo -e "${GREEN}✅ Sharp layer built successfully${NC}"
+# Deploy Sharp layer using pre-built binaries
+deploy_sharp_layer() {
+    echo "📦 Deploying pre-built Sharp layer..."
+    
+    if [ ! -f layer-info.json ]; then
+        echo "🔧 Sharp layer not found, deploying..."
+        ./deploy-sharp-layer.sh
+    else
+        echo -e "${GREEN}✅ Sharp layer already deployed${NC}"
+    fi
 }
 
-# Deploy with Terraform
-deploy_terraform() {
-    echo "🔧 Deploying infrastructure with Terraform..."
+# Deploy with OpenTofu
+deploy_tofu() {
+    echo "🔧 Deploying infrastructure with OpenTofu..."
 
-    # Initialize Terraform
-    terraform init
+    # Initialize OpenTofu
+    tofu init
 
     # Validate configuration
-    terraform validate
+    tofu validate
 
     # Plan deployment
-    terraform plan -out=tfplan
+    tofu plan -out=tfplan
 
     # Apply deployment
     echo -e "${YELLOW}⚠️  Review the plan above. Deploy? (y/n)${NC}"
     read -r response
 
     if [[ "$response" == "y" ]]; then
-        terraform apply tfplan
+        tofu apply tfplan
         echo -e "${GREEN}✅ Infrastructure deployed successfully${NC}"
     else
         echo -e "${RED}❌ Deployment cancelled${NC}"
@@ -108,9 +114,9 @@ deploy_terraform() {
 # Main deployment flow
 main() {
     check_prerequisites
+    deploy_sharp_layer
     build_lambda
-    build_sharp_layer
-    deploy_terraform
+    deploy_tofu
 
     echo -e "${GREEN}🎉 Deployment complete!${NC}"
     echo ""

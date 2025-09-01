@@ -11,7 +11,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 IMAGE_PATH=$1
-BUCKET=$(terraform output -raw bucket_name)
+BUCKET=$(tofu output -raw bucket_name)
 KEY="images/$(basename $IMAGE_PATH)"
 SIZE=$(stat -f%z "$IMAGE_PATH" 2>/dev/null || stat -c%s "$IMAGE_PATH" 2>/dev/null)
 

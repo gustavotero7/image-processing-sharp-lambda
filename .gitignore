@@ -1,2 +1,8 @@
 node_modules
 .terraform
+function.zip
+sharp-layer.zip
+terraform.tfstate
+terraform.tfstate.backup
+images/
+tfplan
