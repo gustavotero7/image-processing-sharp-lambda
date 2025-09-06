@@ -26,7 +26,7 @@ variable "webp_quality" {
 variable "image_sizes" {
   description = "Target image widths for WebP versions"
   type        = list(number)
-  default     = [700, 1400]
+  default     = [1000, 2000, 3000, 4000]
 }
 
 # Local variables

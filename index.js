@@ -133,7 +133,7 @@ exports.handler = async (event, context) => {
 };
 
 /**
- * Process image and create WebP versions
+ * Process image and create versions in both original and WebP formats
  */
 async function processImage(bucket, key, sizes) {
   console.log("processImage function started");
@@ -179,10 +179,12 @@ async function processImage(bucket, key, sizes) {
       density: metadata.density,
     });
 
-    // Process each size
+    // Process each size in both original and WebP formats
     console.log(
       `Processing ${sizes.length} target sizes: [${sizes.join(", ")}]px`,
     );
+    const formats = ['original', 'webp'];
+    
     for (const targetWidth of sizes) {
       console.log(`\nProcessing size: ${targetWidth}px`);
 
@@ -194,35 +196,41 @@ async function processImage(bucket, key, sizes) {
         continue;
       }
 
-      try {
-        console.log("Generating output key...");
-        const outputKey = generateOutputKey(key, targetWidth);
-        console.log(`Output key generated: ${outputKey}`);
+      // Process both original and WebP formats
+      for (const format of formats) {
+        try {
+          console.log(`Generating ${format} format...`);
+          const outputKey = generateOutputKey(key, targetWidth, format);
+          console.log(`Output key generated: ${outputKey}`);
 
-        // Process and upload image
-        console.log("Processing and uploading image variant...");
-        await processAndUploadImage(
-          imageBuffer,
-          bucket,
-          outputKey,
-          targetWidth,
-          metadata,
-        );
+          // Process and upload image
+          console.log(`Processing and uploading ${format} image variant...`);
+          await processAndUploadImage(
+            imageBuffer,
+            bucket,
+            outputKey,
+            targetWidth,
+            metadata,
+            format,
+          );
 
-        results.push({
-          width: targetWidth,
-          key: outputKey,
-          success: true,
-        });
+          results.push({
+            width: targetWidth,
+            format: format,
+            key: outputKey,
+            success: true,
+          });
 
-        console.log(`Created ${targetWidth}px version: ${outputKey}`);
-      } catch (error) {
-        console.error(`❌ Error processing ${targetWidth}px version:`, error);
-        results.push({
-          width: targetWidth,
-          error: error.message,
-          success: false,
-        });
+          console.log(`Created ${targetWidth}px ${format} version: ${outputKey}`);
+        } catch (error) {
+          console.error(`❌ Error processing ${targetWidth}px ${format} version:`, error);
+          results.push({
+            width: targetWidth,
+            format: format,
+            error: error.message,
+            success: false,
+          });
+        }
       }
     }
   } catch (error) {
@@ -243,12 +251,14 @@ async function processAndUploadImage(
   outputKey,
   targetWidth,
   metadata,
+  format = 'webp'
 ) {
   console.log("processAndUploadImage started");
   console.log("Processing parameters:", {
     bucket,
     outputKey,
     targetWidth,
+    format,
     originalDimensions: `${metadata.width}x${metadata.height}`,
   });
 
@@ -262,7 +272,7 @@ async function processAndUploadImage(
 
   // Create Sharp pipeline with optimized settings
   console.log("Creating Sharp pipeline...");
-  const sharpPipeline = sharp(imageBuffer, {
+  let sharpPipeline = sharp(imageBuffer, {
     failOnError: false, // Don't fail on corrupt images
     limitInputPixels: false, // Allow large images (Lambda has memory limits anyway)
   })
@@ -270,19 +280,78 @@ async function processAndUploadImage(
       fit: "inside",
       withoutEnlargement: true,
       kernel: sharp.kernel.lanczos3, // Better quality for downscaling
-    })
-    .webp({
+    });
+
+  // Apply format-specific processing
+  let contentType;
+  let qualitySettings = {};
+  
+  if (format === 'webp') {
+    sharpPipeline = sharpPipeline.webp({
       quality: WEBP_QUALITY,
       effort: 4, // Balance between compression and speed
       smartSubsample: true, // Better compression
       reductionEffort: 4, // Better compression
     });
+    contentType = "image/webp";
+    qualitySettings = {
+      quality: WEBP_QUALITY,
+      effort: 4,
+      smartSubsample: true,
+      reductionEffort: 4,
+    };
+  } else if (format === 'jpeg' || format === 'jpg') {
+    sharpPipeline = sharpPipeline.jpeg({
+      quality: WEBP_QUALITY, // Use same quality setting
+      progressive: true,
+      mozjpeg: true, // Better compression
+    });
+    contentType = "image/jpeg";
+    qualitySettings = {
+      quality: WEBP_QUALITY,
+      progressive: true,
+      mozjpeg: true,
+    };
+  } else if (format === 'png') {
+    sharpPipeline = sharpPipeline.png({
+      compressionLevel: 6, // Balance between size and speed
+      adaptiveFiltering: true,
+      palette: true, // Use palette when beneficial
+    });
+    contentType = "image/png";
+    qualitySettings = {
+      compressionLevel: 6,
+      adaptiveFiltering: true,
+      palette: true,
+    };
+  } else if (format === 'original') {
+    // Keep the original format based on metadata
+    const originalFormat = metadata.format;
+    if (originalFormat === 'jpeg') {
+      sharpPipeline = sharpPipeline.jpeg({
+        quality: WEBP_QUALITY,
+        progressive: true,
+        mozjpeg: true,
+      });
+      contentType = "image/jpeg";
+    } else if (originalFormat === 'png') {
+      sharpPipeline = sharpPipeline.png({
+        compressionLevel: 6,
+        adaptiveFiltering: true,
+        palette: true,
+      });
+      contentType = "image/png";
+    } else {
+      // Default to original format
+      contentType = `image/${originalFormat}`;
+    }
+    qualitySettings = { format: originalFormat };
+  }
 
   console.log("Sharp pipeline configuration:", {
-    quality: WEBP_QUALITY,
-    effort: 4,
-    smartSubsample: true,
-    reductionEffort: 4,
+    format,
+    contentType,
+    ...qualitySettings,
   });
 
   // Convert to buffer
@@ -306,12 +375,13 @@ async function processAndUploadImage(
     Bucket: bucket,
     Key: outputKey,
     Body: processedBuffer,
-    ContentType: "image/webp",
+    ContentType: contentType,
     CacheControl: "max-age=31536000", // 1 year cache
     Metadata: {
       "original-key": outputKey,
       width: targetWidth.toString(),
       height: targetHeight.toString(),
+      format: format,
       "processed-at": new Date().toISOString(),
     },
   });
@@ -319,7 +389,8 @@ async function processAndUploadImage(
   console.log("S3 upload parameters:", {
     bucket,
     key: outputKey,
-    contentType: "image/webp",
+    contentType,
+    format,
     size: processedBuffer.length,
     cacheControl: "max-age=31536000",
   });
@@ -330,17 +401,18 @@ async function processAndUploadImage(
 
   console.log(`Upload completed:`, {
     key: outputKey,
+    format,
     sizeBytes: processedBuffer.length,
     uploadTimeMs: uploadTime,
   });
 }
 
 /**
- * Generate output key for WebP version
+ * Generate output key for resized image versions
  */
-function generateOutputKey(originalKey, width) {
+function generateOutputKey(originalKey, width, format = 'webp') {
   console.log("generateOutputKey started");
-  console.log("Input parameters:", { originalKey, width });
+  console.log("Input parameters:", { originalKey, width, format });
 
   const dir = path.dirname(originalKey);
   const basename = path.basename(originalKey, path.extname(originalKey));
@@ -353,10 +425,22 @@ function generateOutputKey(originalKey, width) {
   });
 
   const suffix = width === "original" ? "" : `-${width}w`;
-  const newKey = path.join(dir, `${basename}${suffix}.webp`);
+  
+  // Use the specified format, or keep original extension for 'original' format
+  let extension;
+  if (format === 'original') {
+    extension = originalExt;
+  } else if (format === 'webp') {
+    extension = '.webp';
+  } else {
+    extension = `.${format}`;
+  }
+  
+  const newKey = path.join(dir, `${basename}${suffix}${extension}`);
 
   console.log("Key construction:", {
     suffix: suffix,
+    extension: extension,
     beforeRootHandling: newKey,
     startsWithDot: newKey.startsWith("."),
   });
@@ -367,6 +451,7 @@ function generateOutputKey(originalKey, width) {
   console.log("generateOutputKey completed:", {
     originalKey,
     finalKey,
+    format,
     transformation: `${originalKey} → ${finalKey}`,
   });
 
