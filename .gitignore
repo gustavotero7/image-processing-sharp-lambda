@@ -1,8 +1,17 @@
+# Node modules
 node_modules
-.terraform
-function.zip
-sharp-layer.zip
-terraform.tfstate
-terraform.tfstate.backup
-images/
-tfplan
+
+# Build artifacts
+build/*.zip
+build/function-build/
+
+# Terraform
+infrastructure/.terraform
+infrastructure/terraform.tfstate
+infrastructure/terraform.tfstate.backup
+infrastructure/tfplan
+
+# OS files
+.DS_Store
+
+tests/images/

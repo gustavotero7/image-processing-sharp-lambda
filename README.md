@@ -2,6 +2,29 @@
 
 A cost-efficient, performant serverless image processing pipeline that converts images to WebP format with multiple size variants.
 
+## 📁 Project Structure
+
+```
+webp-lambda/
+├── src/                      # Application code
+│   └── index.js             # Lambda function handler
+├── infrastructure/           # Terraform configuration
+│   ├── main.tf              # Main infrastructure definition
+│   ├── .terraform/          # Terraform cache (ignored)
+│   └── terraform.tfstate*   # Terraform state (ignored)
+├── scripts/                  # Deployment & utility scripts
+│   ├── deploy.sh            # Main deployment orchestrator
+│   ├── test-sns.sh          # SNS testing
+│   ├── upload-and-process.sh # Image upload helper
+│   └── stress-test.sh       # Load testing
+├── build/                    # Build artifacts (ignored)
+│   └── function.zip         # Compiled Lambda package (includes Sharp)
+├── tests/                    # Test data
+│   └── images/              # Sample test images
+├── package.json             # Node.js dependencies
+└── README.md               # Documentation
+```
+
 ## 🏗️ Architecture
 
 The solution uses a tiered Lambda architecture to optimize costs and performance:
@@ -14,7 +37,7 @@ The solution uses a tiered Lambda architecture to optimize costs and performance
 
 1. **S3 Bucket**: Stores original and processed images
 2. **SNS Topic**: Routes image processing requests
-3. **Lambda Functions**: Three tiers with different resource allocations
+3. **Lambda Functions**: Three tiers with different resource allocations (includes Sharp image processing library)
 4. **SNS Subscriptions**: Filter messages to appropriate Lambda tier based on file size
 
 ## 📊 Resource Allocation Strategy
@@ -37,9 +60,10 @@ The solution uses a tiered Lambda architecture to optimize costs and performance
 ### Prerequisites
 
 - AWS CLI configured with appropriate credentials
-- Terraform >= 1.0
-- Node.js >= 18.0
+- OpenTofu (Terraform alternative) or Terraform >= 1.0
+- Node.js >= 22.0
 - npm
+- zip utility (usually pre-installed on macOS/Linux)
 
 ### Quick Start
 
@@ -60,31 +84,24 @@ image_sizes  = [700, 1400, 2100]
 
 3. **Deploy the infrastructure:**
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh
 ```
 
 ### Manual Deployment
 
 ```bash
-# Build Lambda function
-npm ci --production --platform=linux --arch=x64
-zip -r function.zip index.js node_modules
+# Build and deploy Lambda function (includes Sharp)
+./scripts/deploy.sh
 
-# Build Sharp layer (optional, for better cold starts)
-mkdir -p sharp-layer/nodejs
-cd sharp-layer/nodejs
-npm init -y
-npm install sharp --platform=linux --arch=x64
-cd ..
-zip -r ../sharp-layer.zip nodejs
-cd ..
-
-# Deploy with Terraform
-terraform init
-terraform plan
-terraform apply
+# Alternative: Deploy with Terraform manually
+cd infrastructure
+tofu init
+tofu plan
+tofu apply
 ```
+
+**Note**: Docker is no longer required! The build process uses npm's cross-platform installation flags to download Linux-compatible binaries directly, eliminating the need for Docker while maintaining full compatibility with AWS Lambda. Sharp is bundled directly in the Lambda function package for simplicity.
 
 ## 📝 Usage
 
@@ -114,10 +131,10 @@ Message attributes (for routing):
 
 ```bash
 # Upload and process an image
-./upload-and-process.sh /path/to/image.jpg
+./scripts/upload-and-process.sh /path/to/image.jpg
 
 # Or manually trigger processing for an existing S3 image
-./test-sns.sh my-bucket images/photo.jpg 3500000
+./scripts/test-sns.sh my-bucket images/photo.jpg 3500000
 ```
 
 ### Output Structure
@@ -189,7 +206,7 @@ Assuming 10,000 images/month:
    - Metadata for tracking processing
 
 4. **Cold Start Mitigation**:
-   - Optional Sharp layer for faster starts
+   - Sharp bundled directly in function package
    - Reserved concurrency for warm instances
 
 ## 📊 Monitoring
@@ -225,7 +242,7 @@ aws logs filter-log-events \
 
 ```javascript
 // test/index.test.js
-const { handler, generateOutputKey } = require('../index');
+const { handler, generateOutputKey } = require('../src/index');
 
 describe('Image Processor', () => {
   test('generates correct output key', () => {
@@ -268,8 +285,8 @@ aws s3 ls s3://your-bucket/test/ --recursive
    - Check if image size matches appropriate tier
 
 2. **Sharp Installation Issues**:
-   - Ensure installing for Linux platform: `npm install --platform=linux`
-   - Consider using the Lambda Layer approach
+   - Build process uses cross-platform flags: `npm ci --omit=dev --os=linux --cpu=x64 --libc=glibc`
+   - Sharp is bundled directly in the function package
 
 3. **SNS Message Not Routing**:
    - Verify message attributes include numeric "size" field

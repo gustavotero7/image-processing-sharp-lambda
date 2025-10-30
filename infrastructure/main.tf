@@ -85,6 +85,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "images" {
     id     = "delete-old-versions"
     status = "Enabled"
 
+    filter {}
+
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
@@ -93,6 +95,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "images" {
   rule {
     id     = "intelligent-tiering"
     status = "Enabled"
+
+    filter {}
 
     transition {
       days          = 30
@@ -179,26 +183,16 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_role.name
 }
 
-# Sharp Layer - External pre-built layer
-# Layer must be deployed separately using ./deploy-sharp-layer.sh
-data "local_file" "layer_info" {
-  filename = "${path.module}/layer-info.json"
-}
-
-locals {
-  layer_info = jsondecode(data.local_file.layer_info.content)
-}
-
 # Lambda Functions (3 tiers)
 resource "aws_lambda_function" "image_processor" {
   for_each = local.lambda_tiers
 
-  filename         = "function.zip"
-  source_code_hash = filebase64sha256("function.zip")
+  filename         = "../build/function.zip"
+  source_code_hash = filebase64sha256("../build/function.zip")
   function_name    = "${var.project_name}-${var.environment}-${each.key}"
   role            = aws_iam_role.lambda_role.arn
   handler         = "index.handler"
-  runtime         = "nodejs18.x"
+  runtime         = "nodejs22.x"
   timeout         = each.value.timeout
   memory_size     = each.value.memory_size
 
@@ -207,9 +201,6 @@ resource "aws_lambda_function" "image_processor" {
   }
 
   reserved_concurrent_executions = each.value.reserved_concurrent
-
-  # Use pre-built Sharp layer
-  layers = [local.layer_info.layer_arn]
 
   environment {
     variables = {

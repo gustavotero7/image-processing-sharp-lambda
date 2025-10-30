@@ -135,7 +135,7 @@ FILE_EXTENSION=$(get_file_extension "$BASE_KEY")
 PROCESSING_TIER=$(get_processing_tier "$FILE_SIZE")
 
 # Check if we can get SNS topic ARN
-if ! SNS_TOPIC=$(tofu output -raw sns_topic_arn 2>/dev/null); then
+if ! SNS_TOPIC=$(cd infrastructure && tofu output -raw sns_topic_arn 2>/dev/null); then
     echo -e "${RED}❌ Error: Could not get SNS topic ARN from Terraform output${NC}"
     echo -e "Make sure you have deployed the infrastructure with 'tofu apply'"
     exit 1

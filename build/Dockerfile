@@ -1,8 +1,8 @@
 # Dockerfile for building Lambda function with correct Linux binaries
-FROM --platform=linux/amd64 public.ecr.aws/lambda/nodejs:18
+FROM --platform=linux/amd64 public.ecr.aws/lambda/nodejs:22
 
-# Install zip utility
-RUN yum update -y && yum install -y zip && yum clean all
+# Install zip utility (Amazon Linux 2023 uses dnf instead of yum)
+RUN dnf update -y && dnf install -y zip && dnf clean all
 
 # Set working directory
 WORKDIR ${LAMBDA_TASK_ROOT}
@@ -14,7 +14,7 @@ COPY package*.json ./
 RUN npm install --omit=dev
 
 # Copy source code
-COPY index.js ./
+COPY src/index.js ./
 
 # Create deployment package
 RUN zip -r function.zip index.js node_modules

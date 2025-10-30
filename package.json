@@ -4,10 +4,11 @@
   "description": "AWS Lambda function for processing images to WebP format",
   "main": "index.js",
   "engines": {
-    "node": "^18.17.0"
+    "node": "^22.0.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.600.0"
+    "@aws-sdk/client-s3": "^3.600.0",
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.119",

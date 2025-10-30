@@ -16,7 +16,7 @@ KEY=$2
 SIZE=$3
 
 # Get SNS topic ARN from Terraform output
-SNS_TOPIC=$(tofu output -raw sns_topic_arn)
+SNS_TOPIC=$(cd infrastructure && tofu output -raw sns_topic_arn)
 
 # Create SNS message
 MESSAGE=$(cat <<EOF

@@ -21,19 +21,9 @@ check_prerequisites() {
         exit 1
     fi
 
-    if ! command -v docker &> /dev/null; then
-        echo -e "${RED}❌ Docker is not installed${NC}"
-        exit 1
-    fi
-
-    # Check if Docker is running
-    if ! docker info &> /dev/null; then
-        echo -e "${RED}❌ Docker is not running${NC}"
-        exit 1
-    fi
-
     if ! command -v npm &> /dev/null; then
-        echo -e "${YELLOW}⚠️  npm not found - will use Docker-only build${NC}"
+        echo -e "${RED}❌ npm is not installed${NC}"
+        exit 1
     fi
 
     if ! command -v zip &> /dev/null; then
@@ -46,48 +36,46 @@ check_prerequisites() {
 
 # Build Lambda function
 build_lambda() {
-    echo "📦 Building Lambda function with Docker..."
+    echo "📦 Building Lambda function (Docker-free)..."
 
     # Clean previous builds
-    rm -rf node_modules function.zip
+    rm -rf build/function-build build/function.zip
+    mkdir -p build/function-build
 
-    # Build using Docker to ensure Linux compatibility
-    echo "🐳 Building Lambda package in Docker container..."
-    
-    # Build the container for x86_64 platform
-    docker build --platform linux/amd64 -t lambda-builder .
-    
-    # Create a temporary container and copy the zip file
-    CONTAINER_ID=$(docker create lambda-builder)
-    docker cp $CONTAINER_ID:/var/task/function.zip ./function.zip
-    docker rm $CONTAINER_ID
-    
-    # Clean up the Docker image
-    docker rmi lambda-builder
+    # Copy source files to build directory
+    echo "📋 Copying source files..."
+    cp -r src/index.js build/function-build/
+    cp package*.json build/function-build/
 
-    if [ ! -f function.zip ]; then
-        echo -e "${RED}❌ Failed to create function.zip${NC}"
+    # Install production dependencies with Linux platform flags
+    # Sharp requires native bindings, so we specify --os=linux --cpu=x64 --libc=glibc
+    echo "📦 Installing production dependencies (including Sharp for Linux)..."
+    cd build/function-build
+    npm ci --omit=dev --os=linux --cpu=x64 --libc=glibc
+
+    # Create deployment package
+    echo "🗜️  Creating deployment package..."
+    zip -r ../function.zip index.js node_modules -q
+
+    # Return to root and cleanup
+    cd ../..
+    rm -rf build/function-build
+
+    if [ ! -f build/function.zip ]; then
+        echo -e "${RED}❌ Failed to create build/function.zip${NC}"
         exit 1
     fi
 
-    echo -e "${GREEN}✅ Lambda function built successfully with Docker${NC}"
-}
-
-# Deploy Sharp layer using pre-built binaries
-deploy_sharp_layer() {
-    echo "📦 Deploying pre-built Sharp layer..."
-    
-    if [ ! -f layer-info.json ]; then
-        echo "🔧 Sharp layer not found, deploying..."
-        ./deploy-sharp-layer.sh
-    else
-        echo -e "${GREEN}✅ Sharp layer already deployed${NC}"
-    fi
+    FUNCTION_SIZE=$(du -h build/function.zip | cut -f1)
+    echo -e "${GREEN}✅ Lambda function built successfully${NC}"
+    echo -e "   Size: ${YELLOW}$FUNCTION_SIZE${NC}"
 }
 
 # Deploy with OpenTofu
 deploy_tofu() {
     echo "🔧 Deploying infrastructure with OpenTofu..."
+
+    cd infrastructure
 
     # Initialize OpenTofu
     tofu init
@@ -107,14 +95,16 @@ deploy_tofu() {
         echo -e "${GREEN}✅ Infrastructure deployed successfully${NC}"
     else
         echo -e "${RED}❌ Deployment cancelled${NC}"
+        cd ..
         exit 1
     fi
+
+    cd ..
 }
 
 # Main deployment flow
 main() {
     check_prerequisites
-    deploy_sharp_layer
     build_lambda
     deploy_tofu
 
@@ -126,7 +116,7 @@ main() {
     echo "3. Check CloudWatch logs for processing results"
     echo ""
     echo "Use the test script to send a test message:"
-    echo "  ./test-sns.sh <bucket-name> <image-key> <file-size>"
+    echo "  ./scripts/test-sns.sh <bucket-name> <image-key> <file-size>"
 }
 
 # Run main function
